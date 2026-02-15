@@ -46,8 +46,7 @@ SELECT
       'Table: ', database_name, '.', schema_name, '.', table_name, '. ',
       'User table comment: ', COALESCE(MAX(table_user_comment), 'None provided'), '. ',
       'Columns in table: ', CAST(COUNT(*) AS STRING), '.'
-    ),
-    named_struct('temperature', 1)
+    )
   ) AS ai_generated_table_description,
   ai_query(
     'databricks-gpt-5-2',
@@ -69,8 +68,7 @@ SELECT
           )
         )
       )
-    ),
-    named_struct('temperature', 1)
+    )
   ) AS ai_generated_column_description,
   TO_JSON(SORT_ARRAY(COLLECT_LIST(column_name))) AS ai_generated_list_of_columns,
   'databricks-gpt-5-2' AS generation_model,
