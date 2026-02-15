@@ -15,6 +15,8 @@ import { shouldInjectContextForEndpoint } from './request-context';
 // Header keys for passing context through streamText headers
 export const CONTEXT_HEADER_CONVERSATION_ID = 'x-databricks-conversation-id';
 export const CONTEXT_HEADER_USER_ID = 'x-databricks-user-id';
+export const CONTEXT_HEADER_ASSISTANT_MESSAGE_ID =
+  'x-databricks-assistant-message-id';
 
 // Use centralized authentication - only on server side
 async function getProviderToken(): Promise<string> {
@@ -105,9 +107,11 @@ export const databricksFetch: typeof fetch = async (input, init) => {
   const headers = new Headers(requestInit?.headers);
   const conversationId = headers.get(CONTEXT_HEADER_CONVERSATION_ID);
   const userId = headers.get(CONTEXT_HEADER_USER_ID);
+  const assistantMessageId = headers.get(CONTEXT_HEADER_ASSISTANT_MESSAGE_ID);
   // Remove context headers so they don't get sent to the API
   headers.delete(CONTEXT_HEADER_CONVERSATION_ID);
   headers.delete(CONTEXT_HEADER_USER_ID);
+  headers.delete(CONTEXT_HEADER_ASSISTANT_MESSAGE_ID);
   requestInit = { ...requestInit, headers };
 
   // Inject context into request body if appropriate
@@ -117,6 +121,12 @@ export const databricksFetch: typeof fetch = async (input, init) => {
         const body = JSON.parse(requestInit.body);
         const enhancedBody = {
           ...body,
+          custom_inputs: {
+            ...body.custom_inputs,
+            ...(assistantMessageId
+              ? { assistant_message_id: assistantMessageId }
+              : {}),
+          },
           context: {
             ...body.context,
             conversation_id: conversationId,

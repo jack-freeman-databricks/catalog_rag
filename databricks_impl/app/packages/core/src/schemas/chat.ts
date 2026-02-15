@@ -24,6 +24,7 @@ const previousMessageSchema = z.object({
 
 export const postRequestBodySchema = z.object({
   id: z.string().uuid(),
+  nextMessageId: z.string().uuid().optional(),
   // Optional for continuation/regeneration scenarios (no new user message)
   message: z
     .object({

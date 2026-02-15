@@ -48,6 +48,10 @@ export interface CapturedRequest {
     user_id?: string;
     [key: string]: unknown;
   };
+  customInputs?: {
+    assistant_message_id?: string;
+    [key: string]: unknown;
+  };
   hasContext: boolean;
 }
 
@@ -79,10 +83,14 @@ export function getLastCapturedRequest(): CapturedRequest | undefined {
  */
 function captureRequestContext(url: string, body: unknown): void {
   const context = (body as { context?: CapturedRequest['context'] })?.context;
+  const customInputs = (
+    body as { custom_inputs?: CapturedRequest['customInputs'] }
+  )?.custom_inputs;
   capturedRequests.push({
     url,
     timestamp: Date.now(),
     context,
+    customInputs,
     hasContext: context !== undefined && context !== null,
   });
 }
@@ -256,4 +264,28 @@ export const handlers = [
       access_token: 'test-token',
     });
   }),
+
+  // Mock searching traces for message -> trace lookup
+  http.post(/\/api\/2\.0\/mlflow\/traces\/search$/, async (req) => {
+    const body = await req.request.clone().json();
+    const filter = (body as { filter?: string })?.filter ?? '';
+    const messageIdMatch = /app\.assistant_message_id'\] = '([^']+)'/.exec(filter);
+    const messageId = messageIdMatch?.[1] ?? 'unknown';
+
+    return HttpResponse.json({
+      traces: [
+        {
+          trace_id: `trace-for-${messageId}`,
+        },
+      ],
+    });
+  }),
+
+  // Mock MLflow assessment create endpoint
+  http.post(
+    /\/api\/2\.0\/mlflow\/experiment-traces\/create-assessment-v3$/,
+    () => {
+      return HttpResponse.json({ success: true });
+    },
+  ),
 ];

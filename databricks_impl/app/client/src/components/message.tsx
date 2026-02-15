@@ -39,7 +39,10 @@ import { isCredentialErrorMessage } from '@/lib/oauth-error-utils';
 import { Streamdown } from 'streamdown';
 import { useApproval } from '@/hooks/use-approval';
 
+type FeedbackSentiment = 'up' | 'down';
+
 const PurePreviewMessage = ({
+  chatId,
   message,
   allMessages,
   isLoading,
@@ -49,6 +52,10 @@ const PurePreviewMessage = ({
   regenerate,
   isReadonly,
   requiresScrollPadding,
+  isLatestAssistantMessage = false,
+  feedbackValue,
+  isSubmittingFeedback = false,
+  onFeedback,
 }: {
   chatId: string;
   message: ChatMessage;
@@ -60,6 +67,14 @@ const PurePreviewMessage = ({
   regenerate: UseChatHelpers<ChatMessage>['regenerate'];
   isReadonly: boolean;
   requiresScrollPadding: boolean;
+  isLatestAssistantMessage?: boolean;
+  feedbackValue?: FeedbackSentiment;
+  isSubmittingFeedback?: boolean;
+  onFeedback?: (params: {
+    chatId: string;
+    messageId: string;
+    sentiment: FeedbackSentiment;
+  }) => Promise<void>;
 }) => {
   const [mode, setMode] = useState<'view' | 'edit'>('view');
   const [showErrors, setShowErrors] = useState(false);
@@ -373,6 +388,21 @@ const PurePreviewMessage = ({
               errorCount={errorParts.length}
               showErrors={showErrors}
               onToggleErrors={() => setShowErrors(!showErrors)}
+              isLatestAssistantMessage={
+                message.role === 'assistant' && isLatestAssistantMessage
+              }
+              feedbackValue={feedbackValue}
+              isSubmittingFeedback={isSubmittingFeedback}
+              onFeedback={
+                onFeedback
+                  ? (sentiment) =>
+                      onFeedback({
+                        chatId,
+                        messageId: message.id,
+                        sentiment,
+                      })
+                  : undefined
+              }
             />
           )}
 

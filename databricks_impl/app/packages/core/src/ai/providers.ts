@@ -6,6 +6,7 @@
 import type { OAuthAwareProvider } from '@chat-template/ai-sdk-providers';
 
 export {
+  CONTEXT_HEADER_ASSISTANT_MESSAGE_ID,
   CONTEXT_HEADER_CONVERSATION_ID,
   CONTEXT_HEADER_USER_ID,
 } from '@chat-template/ai-sdk-providers';

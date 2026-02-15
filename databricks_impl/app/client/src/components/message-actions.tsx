@@ -4,7 +4,16 @@ import { Actions, Action } from './elements/actions';
 import { memo } from 'react';
 import { toast } from 'sonner';
 import type { ChatMessage } from '@chat-template/core';
-import { ChevronDown, ChevronUp, CopyIcon, PencilLineIcon } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronUp,
+  CopyIcon,
+  PencilLineIcon,
+  ThumbsDown,
+  ThumbsUp,
+} from 'lucide-react';
+
+type FeedbackSentiment = 'up' | 'down';
 
 function PureMessageActions({
   message,
@@ -13,6 +22,10 @@ function PureMessageActions({
   errorCount = 0,
   showErrors = false,
   onToggleErrors,
+  isLatestAssistantMessage = false,
+  feedbackValue,
+  isSubmittingFeedback = false,
+  onFeedback,
 }: {
   message: ChatMessage;
   isLoading: boolean;
@@ -20,6 +33,10 @@ function PureMessageActions({
   errorCount?: number;
   showErrors?: boolean;
   onToggleErrors?: () => void;
+  isLatestAssistantMessage?: boolean;
+  feedbackValue?: FeedbackSentiment;
+  isSubmittingFeedback?: boolean;
+  onFeedback?: (sentiment: FeedbackSentiment) => void;
 }) {
   const [_, copyToClipboard] = useCopyToClipboard();
 
@@ -66,6 +83,28 @@ function PureMessageActions({
 
   return (
     <Actions className="-ml-0.5">
+      {isLatestAssistantMessage && onFeedback && (
+        <>
+          <Action
+            tooltip="Helpful"
+            onClick={() => onFeedback('up')}
+            disabled={isSubmittingFeedback}
+            data-testid="message-upvote"
+            className={feedbackValue === 'up' ? 'text-green-600' : undefined}
+          >
+            <ThumbsUp />
+          </Action>
+          <Action
+            tooltip="Not helpful"
+            onClick={() => onFeedback('down')}
+            disabled={isSubmittingFeedback}
+            data-testid="message-downvote"
+            className={feedbackValue === 'down' ? 'text-red-600' : undefined}
+          >
+            <ThumbsDown />
+          </Action>
+        </>
+      )}
       {textFromParts && (
         <Action tooltip="Copy" onClick={handleCopy}>
           <CopyIcon />

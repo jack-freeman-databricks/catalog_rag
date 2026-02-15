@@ -19,6 +19,13 @@ interface MessagesProps {
   regenerate: UseChatHelpers<ChatMessage>['regenerate'];
   isReadonly: boolean;
   selectedModelId: string;
+  messageFeedbackById: Record<string, 'up' | 'down' | undefined>;
+  pendingFeedbackMessageId?: string;
+  onSubmitFeedback: (params: {
+    chatId: string;
+    messageId: string;
+    sentiment: 'up' | 'down';
+  }) => Promise<void>;
 }
 
 function PureMessages({
@@ -31,6 +38,9 @@ function PureMessages({
   regenerate,
   isReadonly,
   selectedModelId,
+  messageFeedbackById,
+  pendingFeedbackMessageId,
+  onSubmitFeedback,
 }: MessagesProps) {
   const {
     containerRef: messagesContainerRef,
@@ -58,6 +68,10 @@ function PureMessages({
     }
   }, [status, messagesContainerRef]);
 
+  const latestAssistantMessageId = [...messages]
+    .reverse()
+    .find((message) => message.role === 'assistant')?.id;
+
   return (
     <div
       ref={messagesContainerRef}
@@ -82,6 +96,13 @@ function PureMessages({
               sendMessage={sendMessage}
               regenerate={regenerate}
               isReadonly={isReadonly}
+              isLatestAssistantMessage={
+                message.role === 'assistant' &&
+                latestAssistantMessageId === message.id
+              }
+              feedbackValue={messageFeedbackById[message.id]}
+              isSubmittingFeedback={pendingFeedbackMessageId === message.id}
+              onFeedback={onSubmitFeedback}
               requiresScrollPadding={
                 hasSentMessage && index === messages.length - 1
               }

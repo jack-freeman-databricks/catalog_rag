@@ -274,6 +274,58 @@ export function Chat({
   }, [query, sendMessage, hasAppendedQuery, id, chatHistoryEnabled]);
 
   const [attachments, setAttachments] = useState<Array<Attachment>>([]);
+  const [messageFeedbackById, setMessageFeedbackById] = useState<
+    Record<string, 'up' | 'down' | undefined>
+  >({});
+  const [pendingFeedbackMessageId, setPendingFeedbackMessageId] = useState<
+    string | undefined
+  >(undefined);
+
+  const submitMessageFeedback = useCallback(
+    async ({
+      chatId,
+      messageId,
+      sentiment,
+    }: {
+      chatId: string;
+      messageId: string;
+      sentiment: 'up' | 'down';
+    }) => {
+      const previous = messageFeedbackById[messageId];
+      setMessageFeedbackById((current) => ({ ...current, [messageId]: sentiment }));
+      setPendingFeedbackMessageId(messageId);
+
+      try {
+        const response = await fetchWithErrorHandlers(
+          `/api/chat/${chatId}/messages/${messageId}/feedback`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ sentiment }),
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error(`Feedback request failed with status ${response.status}`);
+        }
+      } catch (error) {
+        setMessageFeedbackById((current) => ({
+          ...current,
+          [messageId]: previous,
+        }));
+        toast({
+          type: 'error',
+          description: 'Unable to submit feedback. Please try again.',
+        });
+        throw error;
+      } finally {
+        setPendingFeedbackMessageId(undefined);
+      }
+    },
+    [messageFeedbackById],
+  );
 
   return (
     <>
@@ -290,6 +342,9 @@ export function Chat({
           sendMessage={sendMessage}
           isReadonly={isReadonly}
           selectedModelId={initialChatModel}
+          messageFeedbackById={messageFeedbackById}
+          pendingFeedbackMessageId={pendingFeedbackMessageId}
+          onSubmitFeedback={submitMessageFeedback}
         />
 
         <div className="sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl gap-2 border-t-0 bg-background px-2 pb-3 md:px-4 md:pb-4">

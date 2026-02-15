@@ -21,6 +21,10 @@ interface CapturedRequest {
     user_id?: string;
     [key: string]: unknown;
   };
+  customInputs?: {
+    assistant_message_id?: string;
+    [key: string]: unknown;
+  };
   hasContext: boolean;
 }
 
@@ -35,9 +39,11 @@ test.describe.serial('Context Injection', () => {
       adaContext,
     }) => {
       const chatId = generateUUID();
+      const nextMessageId = generateUUID();
       const response = await adaContext.request.post('/api/chat', {
         data: {
           id: chatId,
+          nextMessageId,
           message: TEST_PROMPTS.SKY.MESSAGE,
           selectedChatModel: 'chat-model',
           selectedVisibilityType: 'private',
@@ -66,6 +72,7 @@ test.describe.serial('Context Injection', () => {
       expect(chatRequest?.context?.conversation_id).toBe(chatId);
       // Ada's email from fixtures is 'ada-{workerIndex}@example.com'
       expect(chatRequest?.context?.user_id).toMatch(/ada.*@example\.com/);
+      expect(chatRequest?.customInputs?.assistant_message_id).toBe(nextMessageId);
     });
 
     test('conversation_id matches the chat id', async ({ adaContext }) => {

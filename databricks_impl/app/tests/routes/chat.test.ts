@@ -65,6 +65,50 @@ test.describe
       chatIdsCreatedByAda.push(chatId);
     });
 
+    test('Ada can log thumbs feedback for the latest assistant message', async ({
+      adaContext,
+    }) => {
+      skipInEphemeralMode(test);
+      const chatId = generateUUID();
+      const nextMessageId = generateUUID();
+
+      const response = await adaContext.request.post('/api/chat', {
+        data: {
+          id: chatId,
+          nextMessageId,
+          message: TEST_PROMPTS.SKY.MESSAGE,
+          selectedChatModel: 'chat-model',
+          selectedVisibilityType: 'private',
+        },
+      });
+      expect(response.status()).toBe(200);
+      await response.text();
+
+      const messagesResponse = await adaContext.request.get(
+        `/api/messages/${chatId}`,
+      );
+      expect(messagesResponse.status()).toBe(200);
+      const messages = (await messagesResponse.json()) as Array<{
+        id: string;
+        role: string;
+      }>;
+      const latestAssistantMessage = [...messages]
+        .reverse()
+        .find((message) => message.role === 'assistant');
+      expect(latestAssistantMessage).toBeDefined();
+
+      const feedbackResponse = await adaContext.request.post(
+        `/api/chat/${chatId}/messages/${latestAssistantMessage?.id}/feedback`,
+        {
+          data: { sentiment: 'up' },
+        },
+      );
+      expect(feedbackResponse.status()).toBe(200);
+      await expect(feedbackResponse.json()).resolves.toMatchObject({
+        success: true,
+      });
+    });
+
     test("Babbage cannot append message to Ada's chat", async ({
       babbageContext,
     }) => {

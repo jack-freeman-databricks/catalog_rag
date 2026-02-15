@@ -38,6 +38,7 @@ import {
 } from '../middleware/auth';
 import {
   deleteChatById,
+  getMessageById,
   getMessagesByChatId,
   saveChat,
   saveMessages,
@@ -56,9 +57,12 @@ import {
   StreamCache,
   type VisibilityType,
   CONTEXT_HEADER_CONVERSATION_ID,
+  CONTEXT_HEADER_ASSISTANT_MESSAGE_ID,
   CONTEXT_HEADER_USER_ID,
 } from '@chat-template/core';
 import { ChatSDKError } from '@chat-template/core/errors';
+import { getDatabricksToken } from '@chat-template/auth';
+import { getHostUrl } from '@chat-template/utils';
 
 export const chatRouter: RouterType = Router();
 
@@ -95,11 +99,13 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
     const {
       id,
       message,
+      nextMessageId,
       selectedChatModel,
       selectedVisibilityType,
     }: {
       id: string;
       message?: ChatMessage;
+      nextMessageId?: string;
       selectedChatModel: string;
       selectedVisibilityType: VisibilityType;
     } = requestBody;
@@ -231,6 +237,7 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
       headers: {
         [CONTEXT_HEADER_CONVERSATION_ID]: id,
         [CONTEXT_HEADER_USER_ID]: session.user.email ?? session.user.id,
+        [CONTEXT_HEADER_ASSISTANT_MESSAGE_ID]: nextMessageId ?? generateUUID(),
       },
       onFinish: ({ usage }) => {
         finalUsage = usage;
@@ -332,6 +339,199 @@ chatRouter.delete(
 
     const deletedChat = await deleteChatById({ id });
     return res.status(200).json(deletedChat);
+  },
+);
+
+type FeedbackSentiment = 'up' | 'down';
+
+async function databricksApiRequest<T>({
+  path,
+  method = 'POST',
+  body,
+}: {
+  path: string;
+  method?: 'GET' | 'POST';
+  body?: Record<string, unknown>;
+}): Promise<T> {
+  const token = await getDatabricksToken();
+  const baseUrl = getHostUrl();
+  const response = await fetch(`${baseUrl}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`${method} ${path} failed: ${response.status} ${errorText}`);
+  }
+
+  return (await response.json()) as T;
+}
+
+async function findTraceIdForMessage({
+  conversationId,
+  assistantMessageId,
+}: {
+  conversationId: string;
+  assistantMessageId: string;
+}): Promise<string | undefined> {
+  const filter = `trace_metadata['mlflow.trace.session'] = '${conversationId}' AND trace_metadata['app.assistant_message_id'] = '${assistantMessageId}'`;
+  const searchBody = {
+    filter,
+    max_results: 1,
+    order_by: ['timestamp_ms DESC'],
+  };
+
+  const endpoints = [
+    '/api/2.0/mlflow/traces/search',
+    '/api/2.0/mlflow/experiments/search-traces',
+  ];
+
+  for (const endpoint of endpoints) {
+    try {
+      const result = await databricksApiRequest<{
+        traces?: Array<{
+          info?: { request_id?: string };
+          trace_id?: string;
+          request_id?: string;
+        }>;
+      }>({
+        path: endpoint,
+        body: searchBody,
+      });
+
+      const trace = result.traces?.[0];
+      const traceId = trace?.trace_id ?? trace?.request_id ?? trace?.info?.request_id;
+      if (traceId) {
+        return traceId;
+      }
+    } catch (_error) {
+      continue;
+    }
+  }
+
+  return undefined;
+}
+
+async function logUserFeedbackAssessment({
+  traceId,
+  sentiment,
+  userId,
+  userEmail,
+  chatId,
+  messageId,
+}: {
+  traceId: string;
+  sentiment: FeedbackSentiment;
+  userId: string;
+  userEmail?: string;
+  chatId: string;
+  messageId: string;
+}) {
+  const isPositive = sentiment === 'up';
+  const body = {
+    assessment: {
+      trace_id: traceId,
+      name: 'user_feedback',
+      source: {
+        source_type: 'HUMAN',
+        source_id: userId,
+      },
+      feedback: {
+        value: isPositive,
+      },
+      rationale: isPositive ? 'thumbs_up' : 'thumbs_down',
+      metadata: {
+        sentiment,
+        chat_id: chatId,
+        message_id: messageId,
+        user_email: userEmail,
+      },
+    },
+  };
+
+  const endpoints = [
+    '/api/2.0/mlflow/experiment-traces/create-assessment-v3',
+    '/api/2.0/mlflow/traces/assessments/create',
+  ];
+
+  let lastError: unknown;
+  for (const endpoint of endpoints) {
+    try {
+      await databricksApiRequest({
+        path: endpoint,
+        body,
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('Unable to log assessment to MLflow.');
+}
+
+/**
+ * POST /api/chat/:id/messages/:messageId/feedback - Record user thumbs feedback
+ */
+chatRouter.post(
+  '/:id/messages/:messageId/feedback',
+  [requireAuth, requireChatAccess],
+  async (req: Request, res: Response) => {
+    try {
+      const chatId = req.params.id;
+      const messageId = req.params.messageId;
+      const sentiment = req.body?.sentiment as FeedbackSentiment | undefined;
+
+      if (!chatId || !messageId) {
+        return res.status(400).json({ error: 'Missing chat or message id' });
+      }
+
+      if (sentiment !== 'up' && sentiment !== 'down') {
+        return res.status(400).json({ error: 'Invalid sentiment value' });
+      }
+
+      const [dbMessage] = await getMessageById({ id: messageId });
+      if (!dbMessage || dbMessage.chatId !== chatId || dbMessage.role !== 'assistant') {
+        return res.status(404).json({ error: 'Assistant message not found' });
+      }
+
+      const traceId = await findTraceIdForMessage({
+        conversationId: chatId,
+        assistantMessageId: messageId,
+      });
+
+      if (!traceId) {
+        return res.status(404).json({
+          error: 'Trace not found for this assistant message',
+        });
+      }
+
+      const session = req.session;
+      if (!session?.user?.id) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      await logUserFeedbackAssessment({
+        traceId,
+        sentiment,
+        userId: session.user.id,
+        userEmail: session.user.email,
+        chatId,
+        messageId,
+      });
+
+      return res.status(200).json({ success: true, traceId });
+    } catch (error) {
+      console.error('Failed to log user feedback:', error);
+      return res.status(500).json({ error: 'Failed to log feedback' });
+    }
   },
 );
 
