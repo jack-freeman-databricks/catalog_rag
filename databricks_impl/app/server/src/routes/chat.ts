@@ -407,6 +407,9 @@ async function findTraceIdForMessage({
   const endpoints = [
     '/api/2.0/mlflow/traces/search',
     '/api/2.0/mlflow/experiments/search-traces',
+    '/api/2.0/mlflow/experiments/search-traces-v3',
+    '/api/2.0/mlflow/experiment-traces/search-traces-v3',
+    '/api/2.0/mlflow/experiment-trace/search-traces-v3',
   ];
 
   for (const endpoint of endpoints) {
@@ -475,6 +478,8 @@ async function logUserFeedbackAssessment({
   const endpoints = [
     '/api/2.0/mlflow/experiment-traces/create-assessment-v3',
     '/api/2.0/mlflow/traces/assessments/create',
+    '/api/2.0/mlflow/experiments/create-assessment-v3',
+    '/api/2.0/mlflow/experiment-trace/create-assessment-v3',
   ];
 
   let lastError: unknown;

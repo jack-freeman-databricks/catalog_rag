@@ -266,7 +266,9 @@ export const handlers = [
   }),
 
   // Mock searching traces for message -> trace lookup
-  http.post(/\/api\/2\.0\/mlflow\/traces\/search$/, async (req) => {
+  http.post(
+    /\/api\/2\.0\/mlflow\/(?:traces\/search|experiments\/search-traces(?:-v3)?|experiment-traces\/search-traces-v3|experiment-trace\/search-traces-v3)$/,
+    async (req) => {
     const body = await req.request.clone().json();
     const filter = (body as { filter?: string })?.filter ?? '';
     const messageIdMatch = /app\.assistant_message_id'\] = '([^']+)'/.exec(filter);
@@ -279,13 +281,12 @@ export const handlers = [
         },
       ],
     });
-  }),
+    },
+  ),
 
   // Mock MLflow assessment create endpoint
   http.post(
-    /\/api\/2\.0\/mlflow\/experiment-traces\/create-assessment-v3$/,
-    () => {
-      return HttpResponse.json({ success: true });
-    },
+    /\/api\/2\.0\/mlflow\/(?:experiment-traces\/create-assessment-v3|traces\/assessments\/create|experiments\/create-assessment-v3|experiment-trace\/create-assessment-v3)$/,
+    () => HttpResponse.json({ success: true }),
   ),
 ];
