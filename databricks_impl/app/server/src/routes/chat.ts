@@ -352,6 +352,16 @@ chatRouter.delete(
 
 type FeedbackSentiment = 'up' | 'down';
 
+function isEndpointNotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return (
+    error.message.includes('ENDPOINT_NOT_FOUND') ||
+    error.message.includes('No API found for')
+  );
+}
+
 async function databricksApiRequest<T>({
   path,
   method = 'POST',
@@ -500,6 +510,43 @@ async function logUserFeedbackAssessment({
     : new Error('Unable to log assessment to MLflow.');
 }
 
+async function persistFeedbackOnMessage({
+  dbMessage,
+  sentiment,
+}: {
+  dbMessage: Awaited<ReturnType<typeof getMessageById>>[number];
+  sentiment: FeedbackSentiment;
+}) {
+  if (!dbMessage) {
+    return;
+  }
+
+  const existingParts = Array.isArray(dbMessage.parts) ? dbMessage.parts : [];
+  const nextParts = [
+    ...existingParts,
+    {
+      type: 'data-user-feedback',
+      data: {
+        sentiment,
+        createdAt: new Date().toISOString(),
+      },
+    },
+  ];
+
+  await saveMessages({
+    messages: [
+      {
+        id: dbMessage.id,
+        chatId: dbMessage.chatId,
+        role: dbMessage.role,
+        parts: nextParts,
+        attachments: dbMessage.attachments,
+        createdAt: dbMessage.createdAt,
+      },
+    ],
+  });
+}
+
 /**
  * POST /api/chat/:id/messages/:messageId/feedback - Record user thumbs feedback
  */
@@ -554,33 +601,74 @@ chatRouter.post(
         traceId,
       });
 
-      if (!traceId) {
-        return res.status(404).json({
-          error: 'Trace not found for this assistant message',
-        });
-      }
-
       const session = req.session;
       if (!session?.user?.id) {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      await logUserFeedbackAssessment({
-        traceId,
-        sentiment,
-        userId: session.user.id,
-        userEmail: session.user.email,
-        chatId,
-        messageId,
-      });
-      console.log('[Feedback] Assessment logged', {
-        chatId,
-        messageId,
-        traceId,
-        sentiment,
-      });
+      const [dbMessage] = isDatabaseAvailable()
+        ? await getMessageById({ id: messageId })
+        : [undefined];
 
-      return res.status(200).json({ success: true, traceId });
+      // If trace APIs are unavailable in this workspace, keep UX working by
+      // persisting feedback in message parts and returning success.
+      if (!traceId) {
+        await persistFeedbackOnMessage({ dbMessage, sentiment });
+        console.warn(
+          '[Feedback] MLflow trace APIs unavailable or trace not found; stored feedback locally',
+          {
+            chatId,
+            messageId,
+            sentiment,
+          },
+        );
+        return res.status(200).json({
+          success: true,
+          mlflowLogged: false,
+          fallback: 'local_message_feedback',
+        });
+      }
+
+      try {
+        await logUserFeedbackAssessment({
+          traceId,
+          sentiment,
+          userId: session.user.id,
+          userEmail: session.user.email,
+          chatId,
+          messageId,
+        });
+        console.log('[Feedback] Assessment logged', {
+          chatId,
+          messageId,
+          traceId,
+          sentiment,
+        });
+        return res.status(200).json({
+          success: true,
+          traceId,
+          mlflowLogged: true,
+        });
+      } catch (error) {
+        if (isEndpointNotFoundError(error)) {
+          await persistFeedbackOnMessage({ dbMessage, sentiment });
+          console.warn(
+            '[Feedback] MLflow assessment API unavailable; stored feedback locally',
+            {
+              chatId,
+              messageId,
+              sentiment,
+            },
+          );
+          return res.status(200).json({
+            success: true,
+            traceId,
+            mlflowLogged: false,
+            fallback: 'local_message_feedback',
+          });
+        }
+        throw error;
+      }
     } catch (error) {
       console.error('Failed to log user feedback:', error);
       return res.status(500).json({ error: 'Failed to log feedback' });
