@@ -229,6 +229,7 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
 
     let finalUsage: LanguageModelUsage | undefined;
     const streamId = generateUUID();
+    const assistantMessageId = nextMessageId ?? generateUUID();
 
     const model = await myProvider.languageModel(selectedChatModel);
     const result = streamText({
@@ -237,7 +238,7 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
       headers: {
         [CONTEXT_HEADER_CONVERSATION_ID]: id,
         [CONTEXT_HEADER_USER_ID]: session.user.email ?? session.user.id,
-        [CONTEXT_HEADER_ASSISTANT_MESSAGE_ID]: nextMessageId ?? generateUUID(),
+        [CONTEXT_HEADER_ASSISTANT_MESSAGE_ID]: assistantMessageId,
       },
       onFinish: ({ usage }) => {
         finalUsage = usage;
@@ -250,10 +251,17 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
      */
     const stream = createUIMessageStream({
       execute: async ({ writer }) => {
+        let hasGeneratedAssistantMessageId = false;
         writer.merge(
           result.toUIMessageStream({
             originalMessages: uiMessages,
-            generateMessageId: generateUUID,
+            generateMessageId: () => {
+              if (!hasGeneratedAssistantMessageId) {
+                hasGeneratedAssistantMessageId = true;
+                return assistantMessageId;
+              }
+              return generateUUID();
+            },
             sendReasoning: true,
             sendSources: true,
             onError: (error) => {
@@ -355,6 +363,10 @@ async function databricksApiRequest<T>({
 }): Promise<T> {
   const token = await getDatabricksToken();
   const baseUrl = getHostUrl();
+  console.log('[Feedback] Databricks API request', {
+    method,
+    path,
+  });
   const response = await fetch(`${baseUrl}${path}`, {
     method,
     headers: {
@@ -366,6 +378,12 @@ async function databricksApiRequest<T>({
 
   if (!response.ok) {
     const errorText = await response.text();
+    console.error('[Feedback] Databricks API error', {
+      method,
+      path,
+      status: response.status,
+      body: errorText,
+    });
     throw new Error(`${method} ${path} failed: ${response.status} ${errorText}`);
   }
 
@@ -482,12 +500,18 @@ async function logUserFeedbackAssessment({
  */
 chatRouter.post(
   '/:id/messages/:messageId/feedback',
-  [requireAuth, requireChatAccess],
+  [requireAuth],
   async (req: Request, res: Response) => {
     try {
       const chatId = req.params.id;
       const messageId = req.params.messageId;
       const sentiment = req.body?.sentiment as FeedbackSentiment | undefined;
+      console.log('[Feedback] Received feedback request', {
+        chatId,
+        messageId,
+        sentiment,
+        userId: req.session?.user?.id,
+      });
 
       if (!chatId || !messageId) {
         return res.status(400).json({ error: 'Missing chat or message id' });
@@ -497,14 +521,32 @@ chatRouter.post(
         return res.status(400).json({ error: 'Invalid sentiment value' });
       }
 
-      const [dbMessage] = await getMessageById({ id: messageId });
-      if (!dbMessage || dbMessage.chatId !== chatId || dbMessage.role !== 'assistant') {
-        return res.status(404).json({ error: 'Assistant message not found' });
+      // Match chat access semantics used in POST /api/chat:
+      // allow ephemeral chats that are not found in DB.
+      const { allowed, reason } = await checkChatAccess(chatId, req.session?.user.id);
+      if (reason !== 'not_found' && !allowed) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+
+      if (isDatabaseAvailable()) {
+        const [dbMessage] = await getMessageById({ id: messageId });
+        if (
+          !dbMessage ||
+          dbMessage.chatId !== chatId ||
+          dbMessage.role !== 'assistant'
+        ) {
+          return res.status(404).json({ error: 'Assistant message not found' });
+        }
       }
 
       const traceId = await findTraceIdForMessage({
         conversationId: chatId,
         assistantMessageId: messageId,
+      });
+      console.log('[Feedback] Trace lookup result', {
+        chatId,
+        messageId,
+        traceId,
       });
 
       if (!traceId) {
@@ -525,6 +567,12 @@ chatRouter.post(
         userEmail: session.user.email,
         chatId,
         messageId,
+      });
+      console.log('[Feedback] Assessment logged', {
+        chatId,
+        messageId,
+        traceId,
+        sentiment,
       });
 
       return res.status(200).json({ success: true, traceId });

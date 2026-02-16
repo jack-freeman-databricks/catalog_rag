@@ -291,6 +291,11 @@ export function Chat({
       messageId: string;
       sentiment: 'up' | 'down';
     }) => {
+      console.info('[Feedback] Submitting feedback', {
+        chatId,
+        messageId,
+        sentiment,
+      });
       const previous = messageFeedbackById[messageId];
       setMessageFeedbackById((current) => ({ ...current, [messageId]: sentiment }));
       setPendingFeedbackMessageId(messageId);
@@ -308,16 +313,39 @@ export function Chat({
         );
 
         if (!response.ok) {
-          throw new Error(`Feedback request failed with status ${response.status}`);
+          let errorMessage = `Feedback request failed with status ${response.status}`;
+          try {
+            const errorBody = (await response.json()) as { error?: string };
+            if (errorBody?.error) {
+              errorMessage = errorBody.error;
+            }
+          } catch {
+            // Fall back to status-based message when body is not JSON
+          }
+          throw new Error(errorMessage);
         }
+        console.info('[Feedback] Feedback submitted successfully', {
+          chatId,
+          messageId,
+          sentiment,
+        });
       } catch (error) {
+        console.error('[Feedback] Feedback submit failed', {
+          chatId,
+          messageId,
+          sentiment,
+          error: error instanceof Error ? error.message : String(error),
+        });
         setMessageFeedbackById((current) => ({
           ...current,
           [messageId]: previous,
         }));
         toast({
           type: 'error',
-          description: 'Unable to submit feedback. Please try again.',
+          description:
+            error instanceof Error
+              ? error.message
+              : 'Unable to submit feedback. Please try again.',
         });
         throw error;
       } finally {
